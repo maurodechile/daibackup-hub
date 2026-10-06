@@ -63,7 +63,13 @@ ECC trae 68 agents, 293 skills, 94 commands y rules para 22 lenguajes. Esta sele
 | `hooks/` (memory-persistence, etc.) | hooks | **No** | Ejecutan comandos en cada sesión y en cada tool call, y requieren el instalador de ECC. No calzan con tu regla de "no hooks sin revisar" |
 | Rules de otros lenguajes (Go, Rust, Java, Kotlin…) y skills de nicho (DeFi, healthcare, trading) | — | No | Fuera de tu stack |
 
-No se copió nada. Cuando decidas, copia cada archivo a mano, por ejemplo: `cp ~/review/ecc/agents/seo-specialist.md ~/.claude/agents/`.
+El paso **4b** del script copia las filas marcadas **Sí** (si ya existen, las salta):
+- Skills en `~/.claude/skills/`: `seo`, `marketing-campaign`, `brand-voice`, `vite-patterns`, `react-patterns`
+- Agents en `~/.claude/agents/`: `seo-specialist`, `security-reviewer`, `silent-failure-hunter`
+
+Revisé los 8 antes de agregarlos: son solo Markdown, sin scripts, hooks ni comandos de instalación. `react-patterns` menciona otras skills de ECC que no se copian; esas referencias solo quedan sin destino. Los 3 agents vienen con `model: sonnet` y con un bloque "Prompt Defense Baseline" que les prohíbe generar contenido de exploits o ataques. Para revisar código sirven, pero para trabajo de pentest usa tus skills de ciberseguridad.
+
+Las filas "Evaluar" no se copian; se copian a mano, por ejemplo: `cp ~/review/ecc/rules/web/security.md ~/.claude/rules/`.
 
 ## Después de correrlo
 

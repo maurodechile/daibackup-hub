@@ -160,6 +160,32 @@ if (Test-Path $Ecc) {
   $lines | Set-Content -Encoding UTF8 (Join-Path $ReviewDir 'ecc-vs-mi-claude.md')
 }
 
+# ---------- PASO 4b ----------
+Section 'PASO 4b — Copiar skills/agents recomendados de ECC'
+# Revisados: son solo Markdown, sin scripts, hooks ni comandos de instalación.
+$EccSkills = 'seo','marketing-campaign','brand-voice','vite-patterns','react-patterns'
+$EccAgents = 'seo-specialist','security-reviewer','silent-failure-hunter'
+if (Test-Path $Ecc) {
+  $AgentsDir = Join-Path $ClaudeDir 'agents'
+  New-Item -ItemType Directory -Force -Path $AgentsDir | Out-Null
+  foreach ($s in $EccSkills) {
+    $dest = Join-Path $SkillsDir $s
+    if (Test-Path $dest) { Record "ecc skill: $s" 'SALTADO' 'ya existe' }
+    else {
+      try { Copy-Item -Recurse -ErrorAction Stop (Join-Path $Ecc "skills\$s") $dest; Record "ecc skill: $s" 'OK' "copiada a skills\$s" }
+      catch { Record "ecc skill: $s" 'FALLÓ' 'no se pudo copiar' }
+    }
+  }
+  foreach ($a in $EccAgents) {
+    $dest = Join-Path $AgentsDir "$a.md"
+    if (Test-Path $dest) { Record "ecc agent: $a" 'SALTADO' 'ya existe' }
+    else {
+      try { Copy-Item -ErrorAction Stop (Join-Path $Ecc "agents\$a.md") $dest; Record "ecc agent: $a" 'OK' "copiado a agents\$a.md" }
+      catch { Record "ecc agent: $a" 'FALLÓ' 'no se pudo copiar' }
+    }
+  }
+} else { Record 'ecc (copia)' 'FALLÓ' 'no está ~\review\ecc' }
+
 # ---------- PASO 5 ----------
 Section 'PASO 5 — Paperclip'
 if (-not $NodeVer -or $NodeVer -lt [version]'24.11.0') {

@@ -203,6 +203,27 @@ if [ -d "$REVIEW_DIR/ecc" ]; then
   echo "  Comparación nombre a nombre: $REPORT (la recomendación curada está en el README de este script)"
 fi
 
+# ---------- PASO 4b: copiar lo recomendado de ECC ----------
+section "PASO 4b — Copiar skills/agents recomendados de ECC"
+# Revisados: son solo Markdown, sin scripts, hooks ni comandos de instalación.
+ECC_SKILLS="seo marketing-campaign brand-voice vite-patterns react-patterns"
+ECC_AGENTS="seo-specialist security-reviewer silent-failure-hunter"
+if [ -d "$REVIEW_DIR/ecc" ]; then
+  mkdir -p "$CLAUDE_DIR/agents"
+  for s in $ECC_SKILLS; do
+    if [ -e "$SKILLS_DIR/$s" ]; then record "ecc skill: $s" "SALTADO" "ya existe"
+    elif cp -R "$REVIEW_DIR/ecc/skills/$s" "$SKILLS_DIR/$s"; then record "ecc skill: $s" "OK" "copiada a skills/$s"
+    else record "ecc skill: $s" "FALLÓ" "no se pudo copiar"; fi
+  done
+  for a in $ECC_AGENTS; do
+    if [ -e "$CLAUDE_DIR/agents/$a.md" ]; then record "ecc agent: $a" "SALTADO" "ya existe"
+    elif cp "$REVIEW_DIR/ecc/agents/$a.md" "$CLAUDE_DIR/agents/$a.md"; then record "ecc agent: $a" "OK" "copiado a agents/$a.md"
+    else record "ecc agent: $a" "FALLÓ" "no se pudo copiar"; fi
+  done
+else
+  record "ecc (copia)" "FALLÓ" "no está ~/review/ecc"
+fi
+
 # ---------- PASO 5: Paperclip ----------
 section "PASO 5 — Paperclip"
 # Requisitos reales del paquete paperclipai publicado: Node >= 24.11 (no 20) y pnpm >= 9.15.
