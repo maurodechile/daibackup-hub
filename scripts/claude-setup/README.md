@@ -1,42 +1,49 @@
 # Setup global de skills para Claude Code (Windows)
 
-Instala las skills y herramientas en `%USERPROFILE%\.claude\skills`. Si algo ya existe, lo salta. Si un paso falla, sigue con el resto y al final imprime una tabla `herramienta | estado | nota`.
+Instala las skills y herramientas en `%USERPROFILE%\.claude\skills`. **No necesita Git**: los repos se descargan como ZIP desde GitHub. Si algo ya existe, lo salta. Si un paso falla, sigue con el resto y al final imprime una tabla `herramienta | estado | nota`.
+
+Descarga `install-skills.ps1` y ejecútalo desde la carpeta donde lo dejaste:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\claude-setup\install-skills.ps1
+powershell -ExecutionPolicy Bypass -File .\install-skills.ps1
 ```
 
 Con `-AssumeYes` acepta la única confirmación que hay (Paperclip).
 
-**Requisitos:** Git, Node ≥ 22.20 (para `npx skills`) y la CLI `claude` en el PATH (para el plugin). Paperclip además pide Node ≥ 24.11 y pnpm ≥ 9.15.
+| Requisito | Para qué | Si falta |
+|---|---|---|
+| Nada | Skills de GitHub, ECC y la nota en CLAUDE.md | — |
+| CLI `claude` en el PATH | Plugin agent-skills | Queda PENDIENTE |
+| Node.js (cualquier LTS) | `@playwright/cli` | Queda FALTA REQUISITO |
+| Node ≥ 24.11 + pnpm ≥ 9.15 | Paperclip | Queda FALTA REQUISITO |
 
-**Prueba:** lo ejecuté de punta a punta con PowerShell 7.4 en un HOME aislado, dos veces. La primera vez instala todo y la segunda sale todo `SALTADO`. Como el entorno de prueba era Linux, ahí las junctions se reemplazaron por symlinks; en Windows se usan junctions, que no requieren permisos de administrador.
+**Prueba:** lo ejecuté de punta a punta con PowerShell 7.4, dos veces, en un HOME aislado y con un servidor local que imita `codeload.github.com` con los mismos repos. La primera vez instala todo, incluido el plugin; la segunda sale todo `SALTADO`. El entorno de prueba era Linux, así que las junctions se reemplazaron por symlinks y la descarga real desde GitHub no se pudo probar (el proxy la bloquea). En Windows se usan junctions, que no requieren permisos de administrador.
 
 ## Estructura que deja
 
 ```
-~\.claude\skills\<skill>          skills (clon directo o junction)
+~\.claude\skills\<skill>          skills (descarga directa o junction)
 ~\.claude\skill-repos\<repo>      repos con skills anidadas o de referencia
 ~\.understand-anything-plugin     junction a la raíz del plugin (la skill lo busca ahí)
 ~\review\ecc                      Everything Claude Code, solo para revisión
 ~\review\ecc-vs-mi-claude.md      comparación nombre a nombre con tu ~\.claude
 ```
 
-Claude Code solo carga skills en `~/.claude/skills/<nombre>/SKILL.md` (un nivel de profundidad). Los repos con skills en subcarpetas se clonan en `skill-repos/` y cada skill se enlaza aparte. Si los clonas tal cual en `skills/`, Claude Code no los carga.
+Claude Code solo carga skills en `~/.claude/skills/<nombre>/SKILL.md` (un nivel de profundidad). Los repos con skills en subcarpetas se descargan en `skill-repos/` y cada skill se enlaza aparte. Si los descargas tal cual en `skills/`, Claude Code no los carga.
 
 ## Qué revisé antes de ejecutar (hooks, postinstall, setup)
 
 | Herramienta | Hallazgo | Qué hace el script |
 |---|---|---|
-| `skills` (vercel-labs) 1.7 | Sin postinstall. **Requiere Node ≥ 22.20** | Agrega `-a claude-code -y` para que no pregunte nada |
+| `skills` (vercel-labs) 1.7 | Sin postinstall, pero **clona con git** y requiere Node ≥ 22.20 | No se usa: las 4 skills (security-audit, find-skills, transitions-dev, transitions-polish) se descargan por ZIP |
 | `transitions-dev add --free` | Escribe `./transitions/*.md` en el **directorio actual**, así que es por proyecto y no global | No lo ejecuta. La skill `transitions-dev` ya trae las 18 recetas gratis |
 | `@playwright/cli` 0.1.22 | Sin postinstall. `install --skills -g` solo copia un SKILL.md y no descarga navegadores | Lo ejecuta |
 | Understand-Anything | Es un plugin con hooks: un PostToolUse de auto-update y un SessionStart que le ordena a Claude regenerar el grafo *"sin pedir confirmación"*. `/understand` corre `pnpm install` + build la primera vez que lo usas | Enlaza solo las skills, así que **los hooks quedan inactivos** |
-| img2threejs | **No tiene `npm run setup`**: `package.json` solo trae `test` y `package:check`. Los scripts son Python 3.10+ stdlib | Solo lo clona. El harness opcional `npx github:img2threejs/img2 install` no se ejecuta |
+| img2threejs | **No tiene `npm run setup`**: `package.json` solo trae `test` y `package:check`. Los scripts son Python 3.10+ stdlib | Solo lo descarga. El harness opcional `npx github:img2threejs/img2 install` no se ejecuta |
 | ui-ux-pro-max | Las skills traen sus datos y scripts dentro (Python stdlib, sin red) | Enlaza 7 skills. Ojo con los nombres genéricos: `design`, `brand`, `slides` |
 | taste-skill | `skill.sh` solo imprime rutas y no instala nada | Enlaza las 13 skills |
-| awesome-design-md, design.md | **No son skills**: uno es una colección de DESIGN.md y el otro una spec + CLI | Se clonan como referencia en `skill-repos/` |
-| agent-skills (Addy) | `plugin.json` no registra hooks. El propio repo dice que `session-start.sh` no se usa en Claude Code | `claude plugin marketplace add` + `install agent-skills@addy-agent-skills` |
+| awesome-design-md, design.md | **No son skills**: uno es una colección de DESIGN.md y el otro una spec + CLI | Se descargan como referencia en `skill-repos/` |
+| agent-skills (Addy) | `plugin.json` no registra hooks. El propio repo dice que `session-start.sh` no se usa en Claude Code. `/plugin marketplace add` desde GitHub clona con git | Lo descarga por ZIP y arma un marketplace local (`addy-agent-skills-local`) para instalarlo con `claude plugin install` |
 | paperclipai | Sin postinstall. **Requiere Node ≥ 24.11** (no 20) y pnpm ≥ 9.15. `onboard --yes` crea `~/.paperclip` con Postgres embebido y no instala servicio. La telemetría se apaga con `PAPERCLIP_TELEMETRY_DISABLED=1` | Revisa los requisitos, muestra esto y pide confirmación |
 | Orca | En Windows no hay instalador automático | Consulta la API de releases y te da el link del `.exe`/`.msi` |
 

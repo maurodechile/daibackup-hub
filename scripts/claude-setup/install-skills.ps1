@@ -1,4 +1,5 @@
 # Instalador global de skills/herramientas para Claude Code (Windows / PowerShell 5.1+ o 7+).
+# No necesita Git: los repos se descargan como ZIP desde GitHub.
 # Reglas:
 #   - Si una skill/repo ya existe, se salta.
 #   - No ejecuta hooks, postinstall ni setups de terceros sin mostrar qué hacen y pedir confirmación.
@@ -8,10 +9,14 @@
 param([switch]$AssumeYes)
 
 $ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'   # la barra de progreso hace lentísimas las descargas en PS 5.1
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
+
 $ClaudeDir = Join-Path $HOME '.claude'
 $SkillsDir = Join-Path $ClaudeDir 'skills'
 $ReposDir  = Join-Path $ClaudeDir 'skill-repos'
 $ReviewDir = Join-Path $HOME 'review'
+$ZipBase   = if ($env:SKILLS_ZIP_BASE) { $env:SKILLS_ZIP_BASE } else { 'https://codeload.github.com' }
 New-Item -ItemType Directory -Force -Path $SkillsDir, $ReposDir | Out-Null
 
 $Results = New-Object System.Collections.Generic.List[object]
@@ -28,37 +33,79 @@ function Confirm-Step($q) {
 }
 function Get-Ver($s) { try { [version](($s -replace '^v','') -replace '[^0-9.].*$','') } catch { $null } }
 
+# Descarga github.com/<owner>/<repo> (rama por defecto) como ZIP y lo deja en $dest. Devuelve $true/$false.
+function Get-RepoZip($owner, $repo, $dest) {
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ("skill-" + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  try {
+    $zip = Join-Path $tmp 'repo.zip'
+    Invoke-WebRequest -UseBasicParsing -Uri "$ZipBase/$owner/$repo/zip/HEAD" -OutFile $zip -ErrorAction Stop
+    Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp 'x') -Force -ErrorAction Stop
+    $top = Get-ChildItem -Directory (Join-Path $tmp 'x') | Select-Object -First 1   # GitHub mete todo en <repo>-<rama>\
+    New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
+    Move-Item -Path $top.FullName -Destination $dest -ErrorAction Stop
+    return $true
+  } catch {
+    Write-Host "     error descargando $owner/$repo : $($_.Exception.Message)"
+    return $false
+  } finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+  }
+}
+
 $NodeVer = if (Have node) { Get-Ver (node -v) } else { $null }
 $PnpmVer = if (Have pnpm) { Get-Ver (pnpm -v) } else { $null }
 
 Section 'Entorno'
-Write-Host "SO: Windows ($([System.Environment]::OSVersion.VersionString))"
-Write-Host "node: $NodeVer | pnpm: $PnpmVer | git: $(if (Have git) { (git --version) } else { 'no' })"
-if (-not (Have git)) { Write-Host 'ERROR: git es obligatorio (winget install Git.Git).'; exit 1 }
+Write-Host "SO: Windows ($([System.Environment]::OSVersion.VersionString)) | PowerShell $($PSVersionTable.PSVersion)"
+Write-Host "node: $(if ($NodeVer) { $NodeVer } else { 'no instalado' }) | pnpm: $(if ($PnpmVer) { $PnpmVer } else { 'no' }) | claude: $(if (Have claude) { 'sí' } else { 'no está en PATH' })"
 
-# ---------- PASO 1 ----------
-Section 'PASO 1 — Skills vía CLI'
-$SkillsCliOk = $NodeVer -and ($NodeVer -ge [version]'22.20.0')
-
-function Skills-Add($name, $src, [string[]]$extra) {
-  if (Test-Path (Join-Path $SkillsDir $name)) { Record $name 'SALTADO' 'ya existe'; return }
-  if (-not $SkillsCliOk) { Record $name 'FALLÓ' "npx skills requiere Node >= 22.20 (tienes $NodeVer)"; return }
-  & npx -y skills add $src @extra -g -a claude-code -y
-  if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $SkillsDir $name))) { Record $name 'OK' 'vía npx skills' }
-  elseif ($LASTEXITCODE -eq 0) { Record $name 'REVISAR' "el CLI terminó pero no aparece skills\$name" }
-  else { Record $name 'FALLÓ' 'npx skills add devolvió error' }
+# Skill con SKILL.md en la raíz del repo -> se descarga directo en skills\<nombre>
+function Install-RootSkill($owner, $repo, $name) {
+  $dest = Join-Path $SkillsDir $name
+  if (Test-Path $dest) { Record $name 'SALTADO' 'ya existe'; return }
+  if (Get-RepoZip $owner $repo $dest) { Record $name 'OK' "descargado en skills\$name" } else { Record $name 'FALLÓ' 'no se pudo descargar' }
 }
 
-Skills-Add 'security-audit'     'https://github.com/cloudflare/security-audit-skill' @('--skill','security-audit')
-Skills-Add 'find-skills'        'vercel-labs/skills'           @('--skill','find-skills')
-Skills-Add 'transitions-dev'    'Jakubantalik/transitions.dev' @('--skill','transitions-dev')
-Skills-Add 'transitions-polish' 'Jakubantalik/transitions.dev' @('--skill','transitions-polish')
+# Repo con skills en subcarpetas -> se descarga en skill-repos\<repo> y cada skill se enlaza con una junction
+# (las junctions no requieren admin). $only limita a ciertas skills.
+function Install-Nested($owner, $repo, $subdir, [string[]]$only, $label) {
+  if (-not $label) { $label = $repo }
+  $dest = Join-Path $ReposDir $repo
+  if (-not (Test-Path $dest)) {
+    if (-not (Get-RepoZip $owner $repo $dest)) { Record $label 'FALLÓ' 'no se pudo descargar'; return }
+  }
+  $linked = @(); $skipped = @()
+  Get-ChildItem -Directory (Join-Path $dest $subdir) |
+    Where-Object { (Test-Path (Join-Path $_.FullName 'SKILL.md')) -and (-not $only -or $only -contains $_.Name) } |
+    ForEach-Object {
+      $target = Join-Path $SkillsDir $_.Name
+      if (Test-Path $target) { $skipped += $_.Name }
+      else { New-Item -ItemType Junction -Path $target -Target $_.FullName | Out-Null; $linked += $_.Name }
+    }
+  if ($linked.Count) { Record $label 'OK' ("enlazadas: " + ($linked -join ' ') + $(if ($skipped.Count) { " | ya existían: " + ($skipped -join ' ') })) }
+  else { Record $label 'SALTADO' ("ya existían: " + ($skipped -join ' ')) }
+}
+
+function Install-Reference($owner, $repo, $note) {
+  $dest = Join-Path $ReposDir $repo
+  if (Test-Path $dest) { Record $repo 'SALTADO' 'ya existe en skill-repos\'; return }
+  if (Get-RepoZip $owner $repo $dest) { Record $repo 'OK (referencia)' $note } else { Record $repo 'FALLÓ' 'no se pudo descargar' }
+}
+
+# ---------- PASO 1 ----------
+Section 'PASO 1 — Skills (antes vía npx skills; ese CLI usa git, así que se descargan por ZIP)'
+Install-Nested 'cloudflare'   'security-audit-skill' 'skills' @('security-audit') 'security-audit'
+Install-Nested 'vercel-labs'  'skills'               'skills' @('find-skills')    'find-skills'
+Install-Nested 'Jakubantalik' 'transitions.dev'      'skills' @('transitions-dev','transitions-polish') 'transitions-dev'
 
 # `npx transitions-dev add --free` escribe .\transitions\*.md en el directorio actual: es por proyecto.
 Record 'transitions-dev add --free' 'OMITIDO' 'es por proyecto: córrelo dentro de cada repo (crea .\transitions\)'
 
 if (Test-Path (Join-Path $SkillsDir 'playwright-cli')) {
   Record '@playwright/cli' 'SALTADO' 'skill playwright-cli ya existe'
+} elseif (-not $NodeVer) {
+  Record '@playwright/cli' 'FALTA REQUISITO' 'requiere Node.js (winget install OpenJS.NodeJS.LTS)'
 } else {
   if (-not (Have playwright-cli)) { npm i -g '@playwright/cli' }   # sin postinstall
   if (Have playwright-cli) {
@@ -71,81 +118,63 @@ if (Test-Path (Join-Path $SkillsDir 'playwright-cli')) {
 }
 
 # ---------- PASO 2 ----------
-Section 'PASO 2 — Skills vía git clone --depth 1'
-
-function Clone-RootSkill($url, $name) {
-  $dest = Join-Path $SkillsDir $name
-  if (Test-Path $dest) { Record $name 'SALTADO' 'ya existe'; return }
-  git clone -q --depth 1 $url $dest
-  if ($LASTEXITCODE -eq 0) { Record $name 'OK' "clonado en skills\$name" } else { Record $name 'FALLÓ' 'git clone falló' }
-}
-
-# Repos con skills anidadas: clon en skill-repos\ + junction por skill (las junctions no requieren admin).
-function Clone-Nested($url, $repo, $subdir) {
-  $dest = Join-Path $ReposDir $repo
-  if (-not (Test-Path $dest)) {
-    git clone -q --depth 1 $url $dest
-    if ($LASTEXITCODE -ne 0) { Record $repo 'FALLÓ' 'git clone falló'; return }
-  }
-  $linked = @(); $skipped = @()
-  Get-ChildItem -Directory (Join-Path $dest $subdir) | Where-Object { Test-Path (Join-Path $_.FullName 'SKILL.md') } | ForEach-Object {
-    $target = Join-Path $SkillsDir $_.Name
-    if (Test-Path $target) { $skipped += $_.Name }
-    else { New-Item -ItemType Junction -Path $target -Target $_.FullName | Out-Null; $linked += $_.Name }
-  }
-  if ($linked.Count) { Record $repo 'OK' ("enlazadas: " + ($linked -join ' ') + $(if ($skipped.Count) { " | ya existían: " + ($skipped -join ' ') })) }
-  else { Record $repo 'SALTADO' ("todas sus skills ya existían: " + ($skipped -join ' ')) }
-}
-
-function Clone-Reference($url, $repo, $note) {
-  $dest = Join-Path $ReposDir $repo
-  if (Test-Path $dest) { Record $repo 'SALTADO' 'ya existe en skill-repos\'; return }
-  git clone -q --depth 1 $url $dest
-  if ($LASTEXITCODE -eq 0) { Record $repo 'OK (referencia)' $note } else { Record $repo 'FALLÓ' 'git clone falló' }
-}
+Section 'PASO 2 — Skills de GitHub (descarga ZIP)'
 
 # Understand-Anything: solo se enlazan las skills; sus hooks de plugin NO quedan activos.
 # /understand corre `pnpm install` + build dentro del repo la primera vez que se usa.
-Clone-Nested    'https://github.com/Egonex-AI/Understand-Anything' 'understand-anything' 'understand-anything-plugin\skills'
+Install-Nested 'Egonex-AI' 'Understand-Anything' 'understand-anything-plugin\skills' $null 'understand-anything'
 # La skill busca la raíz del plugin en ~\.understand-anything-plugin (entre otras rutas).
-$UaRoot = Join-Path $ReposDir 'understand-anything\understand-anything-plugin'
+$UaRoot = Join-Path $ReposDir 'Understand-Anything\understand-anything-plugin'
 $UaLink = Join-Path $HOME '.understand-anything-plugin'
 if ((Test-Path $UaRoot) -and -not (Test-Path $UaLink)) { New-Item -ItemType Junction -Path $UaLink -Target $UaRoot | Out-Null }
-Clone-RootSkill 'https://github.com/zarazhangrui/frontend-slides' 'frontend-slides'
-Clone-Nested    'https://github.com/cathrynlavery/diagram-design' 'diagram-design' 'skills'
-Clone-RootSkill 'https://github.com/blader/humanizer' 'humanizer'
-Clone-RootSkill 'https://github.com/hardikpandya/stop-slop' 'stop-slop'
-Clone-Reference 'https://github.com/VoltAgent/awesome-design-md' 'awesome-design-md' 'no es skill: colección de DESIGN.md de marcas'
-Clone-Reference 'https://github.com/google-labs-code/design.md' 'design.md' 'no es skill: spec + CLI → npx @google/design.md lint DESIGN.md'
-Clone-Nested    'https://github.com/nextlevelbuilder/ui-ux-pro-max-skill' 'ui-ux-pro-max-skill' '.claude\skills'
-Clone-Nested    'https://github.com/Leonxlnx/taste-skill' 'taste-skill' 'skills'
+
+Install-RootSkill 'zarazhangrui'   'frontend-slides' 'frontend-slides'
+Install-Nested    'cathrynlavery'  'diagram-design'  'skills'
+Install-RootSkill 'blader'         'humanizer'       'humanizer'
+Install-RootSkill 'hardikpandya'   'stop-slop'       'stop-slop'
+Install-Reference 'VoltAgent'         'awesome-design-md' 'no es skill: colección de DESIGN.md de marcas'
+Install-Reference 'google-labs-code'  'design.md'         'no es skill: spec + CLI → npx @google/design.md lint DESIGN.md'
+Install-Nested    'nextlevelbuilder'  'ui-ux-pro-max-skill' '.claude\skills'
+Install-Nested    'Leonxlnx'          'taste-skill'         'skills'
 # img2threejs no tiene `npm run setup`; scripts en Python 3.10+ stdlib.
-Clone-RootSkill 'https://github.com/hoainho/img2threejs' 'img2threejs'
+Install-RootSkill 'hoainho' 'img2threejs' 'img2threejs'
 
 # ---------- PASO 3 ----------
 Section 'PASO 3 — Plugin addyosmani/agent-skills'
-if (Have claude) {
-  if ((claude plugin list 2>$null) -match 'agent-skills') { Record 'agent-skills (plugin)' 'SALTADO' 'ya instalado' }
-  else {
-    claude plugin marketplace add addyosmani/agent-skills
-    if ($LASTEXITCODE -eq 0) { claude plugin install agent-skills@addy-agent-skills }
-    if ($LASTEXITCODE -eq 0) { Record 'agent-skills (plugin)' 'OK' 'marketplace addy-agent-skills' }
-    else { Record 'agent-skills (plugin)' 'FALLÓ' 'hazlo a mano: /plugin marketplace add addyosmani/agent-skills → /plugin install agent-skills@addy-agent-skills' }
-  }
+# `/plugin marketplace add addyosmani/agent-skills` clona con git. Sin git se arma un marketplace local
+# con el repo descargado por ZIP. El plugin no registra hooks.
+$AddyMk   = Join-Path $ReposDir 'addy-agent-skills-local'
+$AddyRepo = Join-Path $AddyMk 'agent-skills'
+if (-not (Have claude)) {
+  Record 'agent-skills (plugin)' 'PENDIENTE' "CLI 'claude' no está en PATH"
+} elseif ((claude plugin list 2>$null) -match 'agent-skills') {
+  Record 'agent-skills (plugin)' 'SALTADO' 'ya instalado'
 } else {
-  Record 'agent-skills (plugin)' 'PENDIENTE' "CLI 'claude' no está en PATH; usa /plugin marketplace add addyosmani/agent-skills dentro de Claude Code"
+  $ok = (Test-Path $AddyRepo) -or (Get-RepoZip 'addyosmani' 'agent-skills' $AddyRepo)
+  if (-not $ok) { Record 'agent-skills (plugin)' 'FALLÓ' 'no se pudo descargar' }
+  else {
+    New-Item -ItemType Directory -Force -Path (Join-Path $AddyMk '.claude-plugin') | Out-Null
+    @'
+{
+  "name": "addy-agent-skills-local",
+  "owner": { "name": "Addy Osmani" },
+  "plugins": [ { "name": "agent-skills", "source": "./agent-skills", "description": "Production-grade engineering skills (descargado por ZIP)" } ]
+}
+'@ | Set-Content -Encoding UTF8 (Join-Path $AddyMk '.claude-plugin\marketplace.json')
+    claude plugin marketplace add $AddyMk
+    if ($LASTEXITCODE -eq 0) { claude plugin install agent-skills@addy-agent-skills-local }
+    if ($LASTEXITCODE -eq 0) { Record 'agent-skills (plugin)' 'OK' 'marketplace local addy-agent-skills-local' }
+    else { Record 'agent-skills (plugin)' 'FALLÓ' "claude plugin devolvió error (marketplace en $AddyMk)" }
+  }
 }
 
 # ---------- PASO 4 ----------
 Section 'PASO 4 — Everything Claude Code (solo revisión)'
 New-Item -ItemType Directory -Force -Path $ReviewDir | Out-Null
 $Ecc = Join-Path $ReviewDir 'ecc'
-if (Test-Path $Ecc) { Record 'everything-claude-code' 'SALTADO' 'ya clonado en ~\review\ecc' }
-else {
-  git clone -q --depth 1 https://github.com/affaan-m/everything-claude-code $Ecc
-  if ($LASTEXITCODE -eq 0) { Record 'everything-claude-code' 'OK (revisión)' 'clonado en ~\review\ecc — no se copió nada' }
-  else { Record 'everything-claude-code' 'FALLÓ' 'git clone falló' }
-}
+if (Test-Path $Ecc) { Record 'everything-claude-code' 'SALTADO' 'ya está en ~\review\ecc' }
+elseif (Get-RepoZip 'affaan-m' 'everything-claude-code' $Ecc) { Record 'everything-claude-code' 'OK (revisión)' 'descargado en ~\review\ecc' }
+else { Record 'everything-claude-code' 'FALLÓ' 'no se pudo descargar' }
 if (Test-Path $Ecc) {
   $lines = @("# ECC vs ~/.claude ($(Get-Date -Format yyyy-MM-dd))", '')
   foreach ($kind in 'agents','skills','rules') {
