@@ -10,12 +10,17 @@ powershell -ExecutionPolicy Bypass -File .\install-skills.ps1
 
 Con `-AssumeYes` acepta la única confirmación que hay (Paperclip).
 
-| Requisito | Para qué | Si falta |
+**No necesitas instalar nada antes.** Si falta algo, el script te muestra qué comando va a correr y te pide autorización (`[s/N]`) antes de instalarlo:
+
+| Si falta… | Para qué | Cómo lo instala (con tu autorización) |
 |---|---|---|
-| Nada | Skills de GitHub, ECC y la nota en CLAUDE.md | — |
-| CLI `claude` en el PATH | Plugin agent-skills | Queda PENDIENTE |
-| Node.js (cualquier LTS) | `@playwright/cli` | Queda FALTA REQUISITO |
-| Node ≥ 24.11 + pnpm ≥ 9.15 | Paperclip | Queda FALTA REQUISITO |
+| Node.js ≥ 24.11 | `@playwright/cli` y Paperclip | `winget install --id OpenJS.NodeJS.LTS` (o `winget upgrade` si tienes una versión vieja) |
+| pnpm ≥ 9.15 | Paperclip | `npm i -g pnpm@latest` |
+| CLI `claude` | Instalar el plugin agent-skills | `npm i -g @anthropic-ai/claude-code` |
+| Paperclip | — | `npx paperclipai onboard --yes` con telemetría desactivada |
+| Orca | — | Descarga el instalador `.exe`/`.msi` del último release y lo ejecuta |
+
+Si respondes que no, ese paso queda `OMITIDO` y el resto sigue. Las skills, ECC y la nota en CLAUDE.md no requieren nada.
 
 **Prueba:** lo ejecuté de punta a punta con PowerShell 7.4, dos veces, en un HOME aislado y con un servidor local que imita `codeload.github.com` con los mismos repos. La primera vez instala todo, incluido el plugin; la segunda sale todo `SALTADO`. El entorno de prueba era Linux, así que las junctions se reemplazaron por symlinks y la descarga real desde GitHub no se pudo probar (el proxy la bloquea). En Windows se usan junctions, que no requieren permisos de administrador.
 

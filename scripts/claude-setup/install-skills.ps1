@@ -1,8 +1,9 @@
-# Instalador global de skills/herramientas para Claude Code (Windows / PowerShell 5.1+ o 7+).
+﻿# Instalador global de skills/herramientas para Claude Code (Windows / PowerShell 5.1+ o 7+).
 # No necesita Git: los repos se descargan como ZIP desde GitHub.
 # Reglas:
 #   - Si una skill/repo ya existe, se salta.
 #   - No ejecuta hooks, postinstall ni setups de terceros sin mostrar qué hacen y pedir confirmación.
+#   - Todo lo que instala software (Node.js, pnpm, CLI de Claude, Paperclip, Orca) pide autorización antes.
 #   - Si algo falla, sigue y al final imprime la tabla herramienta | estado | nota.
 # Uso:  powershell -ExecutionPolicy Bypass -File .\install-skills.ps1
 #       powershell -ExecutionPolicy Bypass -File .\install-skills.ps1 -AssumeYes
@@ -60,6 +61,54 @@ Section 'Entorno'
 Write-Host "SO: Windows ($([System.Environment]::OSVersion.VersionString)) | PowerShell $($PSVersionTable.PSVersion)"
 Write-Host "node: $(if ($NodeVer) { $NodeVer } else { 'no instalado' }) | pnpm: $(if ($PnpmVer) { $PnpmVer } else { 'no' }) | claude: $(if (Have claude) { 'sí' } else { 'no está en PATH' })"
 
+# ---------- PASO 0: requisitos (cada instalación pide autorización) ----------
+Section 'PASO 0 — Requisitos'
+function Update-SessionPath {
+  # winget actualiza el PATH del sistema, pero no el de esta consola
+  $env:Path = (@([Environment]::GetEnvironmentVariable('Path','Machine'), [Environment]::GetEnvironmentVariable('Path','User'), $env:Path) | Where-Object { $_ }) -join ';'
+}
+
+# Node.js: Paperclip pide >= 24.11; con eso también alcanza para @playwright/cli.
+if (-not $NodeVer -or $NodeVer -lt [version]'24.11.0') {
+  $what = if ($NodeVer) { "actualizar Node.js $NodeVer a la versión LTS actual" } else { 'instalar Node.js LTS' }
+  Write-Host "  Node.js $(if ($NodeVer) { $NodeVer } else { 'no está instalado' }). Se necesita >= 24.11 para Paperclip (y cualquier versión para @playwright/cli)."
+  Write-Host "  Comando: winget install --id OpenJS.NodeJS.LTS -e  (instalador oficial de nodejs.org vía winget)"
+  if (-not (Have winget)) {
+    Record 'Node.js' 'FALTA REQUISITO' 'winget no está disponible; instala Node LTS desde https://nodejs.org'
+  } elseif (Confirm-Step "  ¿Autorizas ${what}?") {
+    if ($NodeVer) { winget upgrade --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements }
+    else          { winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements }
+    Update-SessionPath
+    $NodeVer = if (Have node) { Get-Ver (node -v) } else { $null }
+    if ($NodeVer -and $NodeVer -ge [version]'24.11.0') { Record 'Node.js' 'OK' "versión $NodeVer" }
+    elseif ($NodeVer) { Record 'Node.js' 'REVISAR' "quedó en $NodeVer; abre una consola nueva y vuelve a correr el script" }
+    else { Record 'Node.js' 'FALLÓ' 'winget terminó pero node no aparece; abre una consola nueva y vuelve a correr el script' }
+  } else {
+    Record 'Node.js' 'OMITIDO' 'no autorizado'
+  }
+} else {
+  Record 'Node.js' 'SALTADO' "versión $NodeVer ya cumple"
+}
+
+# pnpm (Paperclip pide >= 9.15)
+if ($NodeVer -and (-not $PnpmVer -or $PnpmVer -lt [version]'9.15.0')) {
+  Write-Host "  pnpm $(if ($PnpmVer) { $PnpmVer } else { 'no está instalado' }). Paperclip pide >= 9.15. Comando: npm i -g pnpm@latest"
+  if (Confirm-Step '  ¿Autorizas instalar/actualizar pnpm?') {
+    npm i -g pnpm@latest
+    $PnpmVer = if (Have pnpm) { Get-Ver (pnpm -v) } else { $null }
+    if ($PnpmVer) { Record 'pnpm' 'OK' "versión $PnpmVer" } else { Record 'pnpm' 'FALLÓ' 'npm i -g pnpm falló' }
+  } else { Record 'pnpm' 'OMITIDO' 'no autorizado' }
+} elseif ($PnpmVer) { Record 'pnpm' 'SALTADO' "versión $PnpmVer ya cumple" }
+
+# CLI de Claude Code (para instalar el plugin agent-skills)
+if (-not (Have claude) -and $NodeVer) {
+  Write-Host "  La CLI 'claude' no está en el PATH (se usa para instalar el plugin). Comando: npm i -g @anthropic-ai/claude-code"
+  if (Confirm-Step "  ¿Autorizas instalar la CLI de Claude Code?") {
+    npm i -g '@anthropic-ai/claude-code'
+    if (Have claude) { Record 'claude CLI' 'OK' 'instalada' } else { Record 'claude CLI' 'FALLÓ' 'npm i -g @anthropic-ai/claude-code falló' }
+  } else { Record 'claude CLI' 'OMITIDO' 'no autorizado' }
+}
+
 # Skill con SKILL.md en la raíz del repo -> se descarga directo en skills\<nombre>
 function Install-RootSkill($owner, $repo, $name) {
   $dest = Join-Path $SkillsDir $name
@@ -105,7 +154,7 @@ Record 'transitions-dev add --free' 'OMITIDO' 'es por proyecto: córrelo dentro 
 if (Test-Path (Join-Path $SkillsDir 'playwright-cli')) {
   Record '@playwright/cli' 'SALTADO' 'skill playwright-cli ya existe'
 } elseif (-not $NodeVer) {
-  Record '@playwright/cli' 'FALTA REQUISITO' 'requiere Node.js (winget install OpenJS.NodeJS.LTS)'
+  Record '@playwright/cli' 'FALTA REQUISITO' 'requiere Node.js (no se instaló en el PASO 0)'
 } else {
   if (-not (Have playwright-cli)) { npm i -g '@playwright/cli' }   # sin postinstall
   if (Have playwright-cli) {
@@ -240,14 +289,25 @@ if (-not $NodeVer -or $NodeVer -lt [version]'24.11.0') {
 }
 
 # ---------- PASO 6 ----------
-Section 'PASO 6 — Orca (Windows: solo link, no se instala)'
+Section 'PASO 6 — Orca'
+$OrcaUrl = $null
 try {
   $rel = Invoke-RestMethod -UseBasicParsing 'https://api.github.com/repos/stablyai/orca/releases/latest' -Headers @{ 'User-Agent' = 'install-skills' }
   $exe = $rel.assets | Where-Object { $_.name -match '\.(exe|msi)$' } | Select-Object -First 1
-  if ($exe) { Record 'orca' 'LINK' "$($rel.tag_name): $($exe.browser_download_url)" }
+  if ($exe) { $OrcaUrl = $exe.browser_download_url; Write-Host "  Instalador $($rel.tag_name): $OrcaUrl" }
   else { Record 'orca' 'LINK' "$($rel.tag_name) sin .exe/.msi → $($rel.html_url)" }
 } catch {
   Record 'orca' 'LINK' 'https://github.com/stablyai/orca/releases/latest (no se pudo consultar la API)'
+}
+if ($OrcaUrl) {
+  if (Confirm-Step '  ¿Autorizas descargar y ejecutar el instalador de Orca?') {
+    $OrcaFile = Join-Path ([IO.Path]::GetTempPath()) (Split-Path $OrcaUrl -Leaf)
+    try {
+      Invoke-WebRequest -UseBasicParsing -Uri $OrcaUrl -OutFile $OrcaFile -ErrorAction Stop
+      Start-Process -FilePath $OrcaFile -Wait
+      Record 'orca' 'OK' "instalador ejecutado ($OrcaFile)"
+    } catch { Record 'orca' 'FALLÓ' "no se pudo descargar/ejecutar: $OrcaUrl" }
+  } else { Record 'orca' 'LINK' $OrcaUrl }
 }
 
 # ---------- PASO 7 ----------
