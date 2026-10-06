@@ -1,24 +1,25 @@
-# Setup global de skills para Claude Code
+# Setup global de skills para Claude Code (Windows)
 
-Instala las skills y herramientas en `~/.claude/skills` de **tu equipo**. Si algo ya existe, lo salta. Si un paso falla, sigue con el resto y al final imprime una tabla `herramienta | estado | nota`.
+Instala las skills y herramientas en `%USERPROFILE%\.claude\skills`. Si algo ya existe, lo salta. Si un paso falla, sigue con el resto y al final imprime una tabla `herramienta | estado | nota`.
 
-| SO | Comando |
-|---|---|
-| macOS / Linux | `bash scripts/claude-setup/install-skills.sh` |
-| Windows | `powershell -ExecutionPolicy Bypass -File scripts\claude-setup\install-skills.ps1` |
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\claude-setup\install-skills.ps1
+```
 
-Con `ASSUME_YES=1` (bash) o `-AssumeYes` (PowerShell) acepta la única confirmación que hay (Paperclip).
+Con `-AssumeYes` acepta la única confirmación que hay (Paperclip).
 
-Probado de punta a punta en Linux (Ubuntu 24.04, Node 22) con un HOME aislado, dos veces: la segunda vez todo sale `SALTADO`. El `.ps1` no se pudo ejecutar porque en el entorno de prueba no había PowerShell.
+**Requisitos:** Git, Node ≥ 22.20 (para `npx skills`) y la CLI `claude` en el PATH (para el plugin). Paperclip además pide Node ≥ 24.11 y pnpm ≥ 9.15.
+
+**Prueba:** lo ejecuté de punta a punta con PowerShell 7.4 en un HOME aislado, dos veces. La primera vez instala todo y la segunda sale todo `SALTADO`. Como el entorno de prueba era Linux, ahí las junctions se reemplazaron por symlinks; en Windows se usan junctions, que no requieren permisos de administrador.
 
 ## Estructura que deja
 
 ```
-~/.claude/skills/<skill>          skills (clon directo o symlink/junction)
-~/.claude/skill-repos/<repo>      repos con skills anidadas o de referencia
-~/.understand-anything-plugin     enlace a la raíz del plugin (la skill lo busca ahí)
-~/review/ecc                      Everything Claude Code, solo para revisión
-~/review/ecc-vs-mi-claude.md      comparación nombre a nombre con tu ~/.claude
+~\.claude\skills\<skill>          skills (clon directo o junction)
+~\.claude\skill-repos\<repo>      repos con skills anidadas o de referencia
+~\.understand-anything-plugin     junction a la raíz del plugin (la skill lo busca ahí)
+~\review\ecc                      Everything Claude Code, solo para revisión
+~\review\ecc-vs-mi-claude.md      comparación nombre a nombre con tu ~\.claude
 ```
 
 Claude Code solo carga skills en `~/.claude/skills/<nombre>/SKILL.md` (un nivel de profundidad). Los repos con skills en subcarpetas se clonan en `skill-repos/` y cada skill se enlaza aparte. Si los clonas tal cual en `skills/`, Claude Code no los carga.
@@ -37,7 +38,7 @@ Claude Code solo carga skills en `~/.claude/skills/<nombre>/SKILL.md` (un nivel 
 | awesome-design-md, design.md | **No son skills**: uno es una colección de DESIGN.md y el otro una spec + CLI | Se clonan como referencia en `skill-repos/` |
 | agent-skills (Addy) | `plugin.json` no registra hooks. El propio repo dice que `session-start.sh` no se usa en Claude Code | `claude plugin marketplace add` + `install agent-skills@addy-agent-skills` |
 | paperclipai | Sin postinstall. **Requiere Node ≥ 24.11** (no 20) y pnpm ≥ 9.15. `onboard --yes` crea `~/.paperclip` con Postgres embebido y no instala servicio. La telemetría se apaga con `PAPERCLIP_TELEMETRY_DISABLED=1` | Revisa los requisitos, muestra esto y pide confirmación |
-| Orca | Mac: brew cask. En Windows y Linux no se instala | En Windows consulta la API de releases y da el link del `.exe`/`.msi` |
+| Orca | En Windows no hay instalador automático | Consulta la API de releases y te da el link del `.exe`/`.msi` |
 
 ## PASO 4: qué vale la pena copiar de Everything Claude Code
 
@@ -69,7 +70,7 @@ El paso **4b** del script copia las filas marcadas **Sí** (si ya existen, las s
 
 Revisé los 8 antes de agregarlos: son solo Markdown, sin scripts, hooks ni comandos de instalación. `react-patterns` menciona otras skills de ECC que no se copian; esas referencias solo quedan sin destino. Los 3 agents vienen con `model: sonnet` y con un bloque "Prompt Defense Baseline" que les prohíbe generar contenido de exploits o ataques. Para revisar código sirven, pero para trabajo de pentest usa tus skills de ciberseguridad.
 
-Las filas "Evaluar" no se copian; se copian a mano, por ejemplo: `cp ~/review/ecc/rules/web/security.md ~/.claude/rules/`.
+Las filas "Evaluar" no se copian; se copian a mano, por ejemplo: `Copy-Item ~\review\ecc\rules\web\security.md ~\.claude\rules\`.
 
 ## Después de correrlo
 

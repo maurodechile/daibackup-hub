@@ -1,5 +1,5 @@
 # Instalador global de skills/herramientas para Claude Code (Windows / PowerShell 5.1+ o 7+).
-# Mismas reglas que install-skills.sh:
+# Reglas:
 #   - Si una skill/repo ya existe, se salta.
 #   - No ejecuta hooks, postinstall ni setups de terceros sin mostrar qué hacen y pedir confirmación.
 #   - Si algo falla, sigue y al final imprime la tabla herramienta | estado | nota.
@@ -241,7 +241,7 @@ $Mark
 
 # ---------- Resumen ----------
 Section 'Resumen'
-$Results | Format-Table -AutoSize -Wrap
+$Results | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Host
 Section 'Skills en ~\.claude\skills'
 Get-ChildItem -Name $SkillsDir
 Write-Host "`nReinicia Claude Code (cierra y vuelve a abrir 'claude') y ejecuta /skills para ver las skills cargadas."
